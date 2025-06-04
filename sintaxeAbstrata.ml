@@ -47,16 +47,14 @@ let rec typeInfer (e:term) : tp option =
   | N  -> Some Int                    (* (NS) não tenho certeza do N nem aqui e nem nos termos. *)
   | TT -> Some Bool 
   | FF -> Some Bool
-  | Location e1 ->                    (* (NS) Location recebe um Int? A saída é a referência de um tipo qualquer ou ao end. de memória (Int)? *)
-    match typeInfer e1 with
-    | Some Int -> Some (Ref tp)
-    | None -> None
+                                      (* LOCATION AQUI *)
   | UnitValue -> Some Unit
 
   | Add (e1, e2) -> 
     match (typeInfer e1, typeInfer e2) with
     | (Some Int, Some Int) -> Some Int
     | _ -> None
+
   | LessThan (e1, e2) ->
     match (typeInfer e1, typeInfer e2) with
     | (Some Int, Some Int) -> Some Bool
@@ -70,28 +68,48 @@ let rec typeInfer (e:term) : tp option =
         else None
       | _                  -> None)
     | _         -> None) 
+
   | X -> Some tp                      (* (NS) Apenas não sei --> já questionando a diferença entre mim e um neandertal. *)
-                                      (* (NF) Let aqui *)
+
+  | Let (X, tp, e1, e2) ->            (* (NS) Totalmente sugerido por Copilot. *)
+    match typeInfer e1 with
+    | Some t1 when t1 = tp -> 
+      match typeInfer e2 with
+      | Some t2 -> Some t2
+      | None -> None
+    | _ -> None
+
   | Atr (e1, e2) -> 
     match (typeInfer e1, typeInfer e2) with
-    | (Some t1, Some t2) when t1 = t2 -> Some t1
+    | (Some (Ref t1), Some t2) when t1 = t2 -> Some Unit  
     | _ -> None
-  | New e1 ->                         (* (NS) suponho que senha assim porque pode "criar" uma memória pra uma variável de qualquer tipo. *)
+
+  | New e1 ->                         
     match typeInfer e1 with
     | Some tp -> Some (Ref tp)
-    | None -> None
+    | None -> None                    (* (NS) como pode ser qualquer tipo, coloquei None -> None porque teria que ser bem claro que NÃO tem nenhum tipo.*)
+
   | WhileDo (e1, e2) ->
     match typeInfer e1 with
     | Some Bool -> (
       match typeInfer e2 with
-      | Some t2 -> Unit               (* (NS) Talvez seja Unit por não retornar nada útil. Só vai ter código. *)
-      | None -> None)
+      | Some Unit -> Unit               
+      | None -> None)                 (* (NS) deixei None -> None porque seria código, então: ou tem algo, ou não tem nada.*)
     | _ -> None
-                                      (* (NF) Seq aqui *)
-  | Read -> Some (Ref tp)             (* (NS) supondo que seja assim porque vai ler algum lugar da memória e não tenho certeza se deveria ser Int. *)
-  | Print e1 ->                       (* (NS) supondo que seja assim porque não sei se o que vai imprimir. *)    
+  
+  | Seq (e1, e2) ->
     match typeInfer e1 with
-    | Some tp -> Some Unit          
+    | Some Unit -> (
+      match typeInfer e2 with
+      | Some t2 -> Some t2
+      | None -> None)                 (* (NS) deixei None -> None porque seria código, então: ou tem algo, ou não tem nada.*)
+    | _ -> None
+
+  | Read -> Some Int          
+  
+  | Print e1 ->                           
+    match typeInfer e1 with
+    | Some Int -> Some Unit          
     | _ -> None
 
 (* value : term -> bool *)
@@ -107,7 +125,27 @@ let rec value (e:term) : bool =
 (* step : term -> term option *)
 let rec step (e:term) : term option =  
   match e with 
-  | 
+  | TT -> None
+  | FF -> None
+  | N -> None
+  | UnitValue -> None
+  | Location _ -> None
+  | X -> None
+  | Read -> None
+  | Print _ -> None
+
+  | Let (X,tp,e1,e2) ->               (* (NS) Sugerido pelo Copilot. *)
+    if value e1 then Some (subst X e1 e2) 
+    else (match step e1 with 
+      | None -> None
+      | Some e1' -> Some (Let (X,tp,e1',e2)))
+
+  | IFTE(TT,e2,e3) -> Some e2
+  | IFTE(FF,e2,e3) -> Some e3
+  | IFTE(e1,e2,e3) -> (match step e1 with 
+      | None -> None
+      | Some e1' -> Some (IFTE(e1',e2,e3)))
+
 ;;
 
 
