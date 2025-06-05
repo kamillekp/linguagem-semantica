@@ -29,12 +29,117 @@ type expr =
   | Read                                  (* Read [Unit/()] *)
   | Print of expr           
 
+
+(* typeInfer : expr -> tipo option *)
+let rec typeInfer (e:expr) : tipo option =  
+  match e with 
+  | Num _       -> Some TyInt
+  | Bool _      -> Some TyBool
+  | Id _        -> Some string                        (* (NS) Identificadores não têm tipo definido, daí coloquei o tipo real. *) 
+
+  | If (e1,e2,e3) -> (
+    match typeInfer e1 with
+      | Some Bool -> (
+        match (typeInfer e2,typeInfer e3) with
+          | (Some t2, Some t3) -> if t2=t3 then Some t2 
+                                  else None
+        | _ -> None)
+    | _ -> None)  
+    
+  | Binop (op,e1,e2) -> (
+    match (typeInfer e1, typeInfer e2) with
+      | (Some TyInt, Some TyInt) -> (
+        match op with
+          | Sum | Sub | Mul | Div -> Some TyInt
+          | Eq  | Neq | Lt | Gt -> Some TyBool
+          | _ -> None)
+      | (Some TyBool, Some TyBool) -> (
+        match op with
+          | And | Or -> Some TyBool
+          | _ -> None)
+      | _ -> None)
+
+  | Wh (e1, e2) -> (
+    match typeInfer e1 with
+      | Some TyBool -> (
+        match typeInfer e2 with
+          | Some TyUnit -> Some TyUnit
+          | _ -> None)
+      | _ -> None)
+
+  
+  | Asg (Id _, e1) -> (
+    match (typeInfer Id_,typeInfer e1) with
+      | (Some (TyRef t1), Some t2) -> if t1 = t2 then Some TyUnit 
+                                      else None
+      | _ -> None)
+
+  | Let (var, t, e1, e2) -> (                         (* (NS) não tenho certeza se a ordem de verificação está correta.*)
+    match typeInfer var with
+      | Some string -> (
+        match (typeInfer t, typeInfer e1) with
+          | (Some t1, Some t2) -> if t1 = t2 then 
+                                    match typeInfer e2 with
+                                      | Some t3 -> Some t3
+                                      | _ -> None
+                                  else None
+          | _ -> None) 
+      | _ -> None)
+
+  | New e1 -> (
+    match typeInfer e1 with
+      | Some t -> Some (TyRef t)
+      | _ -> None)
+  
+  | Deref e1 -> (
+    match typeInfer e1 with
+      | Some (TyRef t) -> Some t
+      | _ -> None)
+  
+  | Unit -> Some TyUnit
+
+  | Seq (e1, e2) -> (
+    match typeInfer e1 with
+      | Some TyUnit -> (
+        match typeInfer e2 with
+          | Some t2 -> Some t2
+          | _ -> None)
+      | _ -> None)
+
+  | Read -> Some TyInt                  
+
+  | Print e1 -> (
+    match typeInfer e1 with
+      | Some TyInt -> Some TyUnit
+      | _ -> None)
+   
+
+(* value : expr -> bool *)
+let rec value (e:expr) : bool =
+  match e with
+  | Num _ -> true
+  | Bool _ -> true
+  | _ -> false
+
+
+(* step : expr -> expr option *)                      (* (NF) Ainda não comecei. *)
+let rec step (e:expr) : term option =  
+  match e with 
+  |
+;;
+                      
+(* steps : expr -> expr *)
+let rec steps (e:expr) : expr =
+  match step e with
+  | None -> e
+  | Some e' -> steps e'
   
 
 
 
 
-  
+
+
 
 
 (* ----------------------------------------------- *)
@@ -59,7 +164,7 @@ let prt = Print(Deref (Id "y"))
 let seq = Seq(whi, prt)
 
 
-(* Outra forma de fazer a mesma coisa?*)
+(* Outra forma de fazer a mesma coisa *)
 (*let fat = 
   Let("x", TyInt, Read,                     [let  x: int     =  read() in]
   Let("z", TyRef TyInt, New (Id "x"),       [let  z: ref int = new x in  ]  
