@@ -161,11 +161,23 @@ let rec step (e : expr) : expr option =
      | Some e1' -> Some (Binop (bop, e1', e2))
      | None -> None)
 
-  | Let (s, t, e1, e2) ->
-    (match step e1 with
-     | Some e1' -> Some (Let (s, t, e1', e2))
-     | None -> None)
+  | Wh (e1, e2) -> Some (If (e1, Seq (e2, Wh (e1, e2)), Unit))
 
+  (*| Asg ->*)
+
+  | Let (string, tipo, e1, e2) ->
+    (match step e1 with
+     | Some e1' -> Some (Let (string, tipo, e1', e2))
+     | None -> None)
+  (* (NF) LET PARA APLICAÇÃO *)
+
+  (*| New () ->
+  | Deref () ->
+  | Unit () ->
+  | Seq () ->
+  | Read () ->                       
+  | Print () ->*)
+  
   | Cons (Num n, Nil) -> Some (Cons (Num n, Nil))
   | Cons (Num n, e2) -> 
     (match step e2 with
