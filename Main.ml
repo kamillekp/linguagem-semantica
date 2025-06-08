@@ -1,3 +1,4 @@
+(* Tipos básicos *)
 (* bop = binary operation *)
 type bop =  
   | Sum | Sub | Mul | Div               (* operações aritméticas *)
@@ -28,188 +29,456 @@ type expr =
   | Seq of expr * expr                  (* sequência *)
   | Read                                (* Read [Unit/()] *)
   | Print of expr                       (* print *)
+  | Loc of int                          (* localização na memória *)
 
   | Nil                                 (* [] *)
   | Cons of expr * expr                 (* n :: l *)
   | Prefix of expr * expr               (* n.l *)
   | Suffix of expr * expr               (* l.n *)
 
+(*------------------------------------------------------------------------------------------------*)
+(* AMBIENTE DE TIPOS - Necessário para Type Inference *)
+(*------------------------------------------------------------------------------------------------*)
+type type_env = (string * tipo) list
+
+(* Busca tipo de uma variável no ambiente *)
+let rec lookup_type (var: string) (env: type_env) : tipo option =
+  match env with
+  | [] -> None
+  | (x, t) :: rest -> if x = var then Some t else lookup_type var rest
+
+(* Adiciona uma variável e seu tipo ao ambiente *)
+let extend_env (var: string) (ty: tipo) (env: type_env) : type_env =
+  (var, ty) :: env
+
+(* Função auxiliar para criar ambiente inicial *)
+let empty_env : type_env = [] 
+
+(*------------------------------------------------------------------------------------------------*)
 (* typeInfer : expr -> tipo option *)
-let rec typeInfer (e : expr) : tipo option =  
+(*------------------------------------------------------------------------------------------------*)
+let rec typeInfer (env: type_env) (e : expr) : tipo option =  
   match e with 
   | Num _       -> Some TyInt
   | Bool _      -> Some TyBool
-  | Id _        -> None                 (* (NS) ID seria apenas um valor para (des)referenciar? *)
+  | Unit        -> Some TyUnit
+  | Read        -> Some TyInt
+  | Id x        -> lookup_type x env                  (* Variáveis, seu tipo é buscado no ambiente de tipos *)
+  | Loc _       -> Some (TyRef TyInt)                 (* Localizações, a memória só armazena inteiros? *)
 
+  (* T-if: Γ ⊢ e₁ : bool, Γ ⊢ e₂ : T, Γ ⊢ e₃ : T *)
   | If (e1, e2, e3) -> 
-    (match typeInfer e1 with
+    (match typeInfer env e1 with
      | Some TyBool -> 
-       (match (typeInfer e2, typeInfer e3) with
+       (match (typeInfer env e2, typeInfer env e3) with
         | (Some t2, Some t3) when t2 = t3 -> Some t2
         | _ -> None)
      | _ -> None)
 
+  (* T-op+, T-op< e outras operações *)
   | Binop (bop, e1, e2) -> 
-    (match (typeInfer e1, typeInfer e2) with
+    (match (typeInfer env e1, typeInfer env e2) with
      | (Some TyInt, Some TyInt) -> 
        (match bop with
-        | Sum | Sub | Mul | Div -> Some TyInt
-        | Eq | Neq | Lt | Gt -> Some TyBool
+        | Sum | Sub | Mul | Div -> Some TyInt           (* Operações aritméticas *)
+        | Eq | Neq | Lt | Gt -> Some TyBool             (* Comparações *)
         | _ -> None)
      | (Some TyBool, Some TyBool) -> 
        (match bop with
-        | And | Or -> Some TyBool
+        | And | Or -> Some TyBool                       (* Operações lógicas *)
+        | Eq | Neq -> Some TyBool                       (* Comparações *)
         | _ -> None)
      | _ -> None)
 
+  (* T-while: Γ ⊢ e₁ : bool, Γ ⊢ e₂ : unit *)
   | Wh (e1, e2) -> 
-    (match typeInfer e1 with
+    (match typeInfer env e1 with
      | Some TyBool -> 
-       (match typeInfer e2 with
+       (match typeInfer env e2 with
         | Some TyUnit -> Some TyUnit
         | _ -> None)
      | _ -> None)
 
+  (* T-atr: Γ ⊢ e₁ : ref T, Γ ⊢ e₂ : T *)
   | Asg (e1, e2) -> 
-    (match typeInfer e1 with
+    (match typeInfer env e1 with
      | Some (TyRef t1) -> 
-       (match typeInfer e2 with
+       (match typeInfer env e2 with
         | Some t2 when t1 = t2 -> Some TyUnit
         | _ -> None)
      | _ -> None)
-
+  
+  (* T-let: Γ ⊢ e₁ : T, Γ, x ↦ T ⊢ e₂ : T' *)
+  (* Adicionamos a variável ao ambiente para verificar tipagem dentro do corpo (escopo da variável) *)
   | Let (name, ty, e1, e2) -> 
-    (match typeInfer e1 with
-     | Some t1 when t1 = ty -> typeInfer e2
+    (match typeInfer env e1 with
+     | Some t1 when t1 = ty -> 
+         let env' = extend_env name ty env in
+         typeInfer env' e2
      | _ -> None)
-
+  
+  (* T-new: Γ ⊢ e : T *)
   | New e1 -> 
-    (match typeInfer e1 with
+    (match typeInfer env e1 with
      | Some t -> Some (TyRef t)
      | _ -> None)
 
+  (* T-deref: Γ ⊢ e : ref T *)
   | Deref e1 -> 
-    (match typeInfer e1 with
+    (match typeInfer env e1 with
      | Some (TyRef t) -> Some t
      | _ -> None)
-
-  | Unit -> Some TyUnit
-
+  
+  (* T-seq: Γ ⊢ e₁ : unit, Γ ⊢ e₂ : T *)
   | Seq (e1, e2) -> 
-    (match typeInfer e1 with
-     | Some TyUnit -> typeInfer e2
+    (match typeInfer env e1 with
+     | Some TyUnit -> typeInfer env e2
      | _ -> None)
 
-  | Read -> Some TyInt
-
+  (* T-print: Γ ⊢ e : int *)
   | Print e1 -> 
-    (match typeInfer e1 with
+    (match typeInfer env e1 with
      | Some TyInt -> Some TyUnit
      | _ -> None)
 
-  | Nil -> Some (TyList TyInt)
+  (* Inferência para operações de lista *)
+  (* Lista vazia pode ser de qualquer tipo - por simplicidade assumimos TyInt *)
+  | Nil -> Some (TyList TyInt)  (* Idealmente seria polimórfico *)
 
+  (* Cons: primeiro elemento deve ser do mesmo tipo que os elementos da lista *)
   | Cons (e1, e2) -> 
-    (match (typeInfer e1, typeInfer e2) with
-     | (Some TyInt, Some (TyList TyInt)) -> Some (TyList TyInt)
+    (match (typeInfer env e1, typeInfer env e2) with
+     | (Some t1, Some (TyList t2)) when t1 = t2 -> Some (TyList t1)
      | _ -> None)
 
+  (* Prefix: adiciona elemento no início (mesmo que Cons) *)
   | Prefix (e1, e2) -> 
-    (match (typeInfer e1, typeInfer e2) with
-     | (Some TyInt, Some (TyList TyInt)) -> Some (TyList TyInt)
+    (match (typeInfer env e1, typeInfer env e2) with
+     | (Some t1, Some (TyList t2)) when t1 = t2 -> Some (TyList t1)
      | _ -> None)
 
+  (* Suffix: adiciona elemento no final *)
   | Suffix (e1, e2) -> 
-    (match (typeInfer e1, typeInfer e2) with
-     | (Some (TyList TyInt), Some TyInt) -> Some (TyList TyInt)
+    (match (typeInfer env e1, typeInfer env e2) with
+     | (Some (TyList t1), Some t2) when t1 = t2 -> Some (TyList t1)
      | _ -> None)
 
+(*------------------------------------------------------------------------------------------------*)
+(* Função auxiliar para verificar tipos antes da execução *)
+(*------------------------------------------------------------------------------------------------*)
+let type_check (e: expr) : bool =
+  match typeInfer empty_env e with
+  | Some _ -> true
+  | None -> false
+
+
+(*------------------------------------------------------------------------------------------------*)
+(* Definição do Estado Global *)
+(*------------------------------------------------------------------------------------------------*)
+type location = int
+
+type value = 
+  | VNum of int
+  | VBool of bool
+  | VUnit
+  | VLoc of location
+  | VList of value list
+
+type state = {
+  store: (location * value) list;       (* memória: mapeamento localização -> valor *)
+  input: int list;                      (* lista de entrada para read *)
+  output: int list;                     (* lista de saída para print *)
+  next_loc: int;                        (* próxima localização livre *)
+}
+
+(* Estado inicial *)
+let initial_state = {
+  store = [];
+  input = [];
+  output = [];
+  next_loc = 0;
+}
+
+(*------------------------------------------------------------------------------------------------*)
+(* Funções Auxiliares para Gerenciamento de Estado *)
+(*------------------------------------------------------------------------------------------------*)
+(* l ∉ Dom(σ) - aloca nova localização *)
+let allocate (v: value) (state: state) : location * state =
+  let l = state.next_loc in
+  let new_store = (l, v) :: state.store in
+  (l, {state with store = new_store; next_loc = l + 1})
+
+(* l ∈ Dom(σ), σ(l) = v - busca valor em localização *)
+let lookup (l: location) (state: state) : value option =
+  List.assoc_opt l state.store
+
+(* σ[l ↦ v] - atualiza localização *)
+let update (l: location) (v: value) (state: state) : state =
+  let new_store = (l, v) :: (List.remove_assoc l state.store) in
+  {state with store = new_store}
+
+(* Converte expressão para valor *)
+let expr_to_value (e: expr) : value =
+  match e with
+  | Num n -> VNum n
+  | Bool b -> VBool b
+  | Unit -> VUnit
+  | Loc l -> VLoc l
+  | _ -> failwith "Not a value"
+
+(* Converte valor para expressão *)
+let value_to_expr (v: value) : expr =
+  match v with
+  | VNum n -> Num n
+  | VBool b -> Bool b
+  | VUnit -> Unit
+  | VLoc l -> Loc l
+  | VList _ -> failwith "Cannot convert list value to expression"
+
+(*------------------------------------------------------------------------------------------------*)
+(* Função de Substituição: {v/x}e *)
+(*------------------------------------------------------------------------------------------------*)
+let rec substitute (var: string) (replacement: expr) (expr: expr) : expr =
+  match expr with
+  | Num _ | Bool _ | Unit | Nil | Read | Loc _ -> expr
+  
+  | Id x -> if x = var then replacement else Id x
+  
+  | If (e1, e2, e3) -> 
+      If (substitute var replacement e1,
+          substitute var replacement e2,
+          substitute var replacement e3)
+  
+  | Binop (op, e1, e2) -> 
+      Binop (op, 
+             substitute var replacement e1,
+             substitute var replacement e2)
+  
+  | Wh (e1, e2) -> 
+      Wh (substitute var replacement e1,
+          substitute var replacement e2)
+  
+  | Asg (e1, e2) -> 
+      Asg (substitute var replacement e1,
+           substitute var replacement e2)
+  
+  | Let (x, ty, e1, e2) -> 
+      let e1' = substitute var replacement e1 in
+      let e2' = if x = var then e2 else substitute var replacement e2 in
+      Let (x, ty, e1', e2')
+  
+  | New e -> New (substitute var replacement e)
+  
+  | Deref e -> Deref (substitute var replacement e)
+  
+  | Seq (e1, e2) -> 
+      Seq (substitute var replacement e1,
+           substitute var replacement e2)
+  
+  | Print e -> Print (substitute var replacement e)
+  
+  | Cons (e1, e2) -> 
+      Cons (substitute var replacement e1,
+            substitute var replacement e2)
+  
+  | Prefix (e1, e2) -> 
+      Prefix (substitute var replacement e1,
+              substitute var replacement e2)
+  
+  | Suffix (e1, e2) -> 
+      Suffix (substitute var replacement e1,
+              substitute var replacement e2)
+
+(*------------------------------------------------------------------------------------------------*)
 (* value : expr -> bool *)
+(*------------------------------------------------------------------------------------------------*)
+(* Verifica se uma expressão é um valor (ou seja, não pode ser mais reduzida) *)
 let rec value (e : expr) : bool =
   match e with
-  | Num _ | Bool _ -> true
+  | Num _ | Bool _ | Unit | Loc _ -> true
+  | Nil -> true
+  | Cons (e1, e2) -> value e1 && value e2  (* Lista é valor se todos elementos forem valores *)
   | _ -> false
 
-(* step : expr -> expr option *)                      
-let rec step (e : expr) : expr option =  
+(*------------------------------------------------------------------------------------------------*)
+(* step : expr -> state -> (expr * state) option *)
+(*------------------------------------------------------------------------------------------------*)
+let rec step (e : expr) (state : state) : (expr * state) option =  
   match e with 
+  (* Valores não podem dar mais passos *)
   | Num _ | Bool _ | Unit | Id _ -> None
 
-  | If (Bool true, e2, _) -> Some e2
-  | If (Bool false, _, e3) -> Some e3
+  (* Regras para If *)
+  | If (Bool true, e2, _) -> Some (e2, state)
+  | If (Bool false, _, e3) -> Some (e3, state)
   | If (e1, e2, e3) -> 
-    (match step e1 with
-     | Some e1' -> Some (If (e1', e2, e3))
+    (match step e1 state with
+     | Some (e1', state') -> Some (If (e1', e2, e3), state')
      | None -> None)
 
-  | Binop (Sum, Num v1, Num v2) -> Some (Num (v1 + v2))
-  | Binop (Sub, Num v1, Num v2) -> Some (Num (v1 - v2))
-  | Binop (Mul, Num v1, Num v2) -> Some (Num (v1 * v2))
-  | Binop (Div, Num v1, Num v2) -> Some (Num (v1 / v2))
-  | Binop (Eq, Num v1, Num v2) -> Some (Bool (v1 = v2))
-  | Binop (Neq, Num v1, Num v2) -> Some (Bool (v1 <> v2))
-  | Binop (Lt, Num v1, Num v2) -> Some (Bool (v1 < v2))
-  | Binop (Gt, Num v1, Num v2) -> Some (Bool (v1 > v2))
-  | Binop (And, Bool b1, Bool b2) -> Some (Bool (b1 && b2))
-  | Binop (Or, Bool b1, Bool b2) -> Some (Bool (b1 || b2))
-  | Binop (bop, v1, e2) when value v1 -> 
-    (match step e2 with
-     | Some e2' -> Some (Binop (bop, v1, e2'))
-     | None -> None)
-  | Binop (bop, e1, e2) -> 
-    (match step e1 with
-     | Some e1' -> Some (Binop (bop, e1', e2))
-     | None -> None)
-
-  | Wh (e1, e2) -> Some (If (e1, Seq (e2, Wh (e1, e2)), Unit))
-
-  (*| Asg ->*)
-
-  | Let (string, tipo, e1, e2) ->
-    (match step e1 with
-     | Some e1' -> Some (Let (string, tipo, e1', e2))
-     | None -> None)
-  (* (NF) LET PARA APLICAÇÃO *)
-
-  (*| New () ->
-  | Deref () ->
-  | Unit () ->
-  | Seq () ->
-  | Read () ->                       
-  | Print () ->*)
+  (* Regras para operações binárias *)
+  (* (op+): [[n₁]] = [[n₁]] + [[n₂]] *)
+  | Binop (Sum, Num v1, Num v2) -> Some (Num (v1 + v2), state)
+  | Binop (Sub, Num v1, Num v2) -> Some (Num (v1 - v2), state)
+  | Binop (Mul, Num v1, Num v2) -> Some (Num (v1 * v2), state)
+  | Binop (Div, Num v1, Num v2) -> Some (Num (v1 / v2), state)
   
-  | Cons (Num n, Nil) -> Some (Cons (Num n, Nil))
-  | Cons (Num n, e2) -> 
-    (match step e2 with
-     | Some e2' -> Some (Cons (Num n, e2'))
+  (* (op<true): [[n₁]] < [[n₂]] *)
+  | Binop (Lt, Num v1, Num v2) -> Some (Bool (v1 < v2), state)
+  | Binop (Gt, Num v1, Num v2) -> Some (Bool (v1 > v2), state)
+  | Binop (Eq, Num v1, Num v2) -> Some (Bool (v1 = v2), state)
+  | Binop (Neq, Num v1, Num v2) -> Some (Bool (v1 <> v2), state)
+  
+  (* Operações booleanas *)
+  | Binop (And, Bool b1, Bool b2) -> Some (Bool (b1 && b2), state)
+  | Binop (Or, Bool b1, Bool b2) -> Some (Bool (b1 || b2), state)
+  | Binop (Eq, Bool b1, Bool b2) -> Some (Bool (b1 = b2), state)
+  | Binop (Neq, Bool b1, Bool b2) -> Some (Bool (b1 <> b2), state)
+  
+  (* (op2): v op e₂ → v op e₂' *)
+  | Binop (bop, v1, e2) when value v1 -> 
+    (match step e2 state with
+     | Some (e2', state') -> Some (Binop (bop, v1, e2'), state')
+     | None -> None)
+  
+  (* (op1): e₁ op e₂ → e₁' op e₂ *)
+  | Binop (bop, e1, e2) -> 
+    (match step e1 state with
+     | Some (e1', state') -> Some (Binop (bop, e1', e2), state')
+     | None -> None)
+
+  (* Regra para While *)
+  | Wh (e1, e2) -> Some (If (e1, Seq (e2, Wh (e1, e2)), Unit), state)
+
+  (* Regras para Let *)
+  (* Cria variável*)
+  (* 'ty' é o tipo de da variável, que é definido explicitamente na inicialização *)
+  | Let (x, ty, v, e2) when value v ->                                   (* e-let2, associa valor à variável *)
+      Some (substitute x v e2, state)
+  | Let (x, ty, e1, e2) ->                                               (* e-let1, avalia expressão do lado esquerdo *)
+    (match step e1 state with
+     | Some (e1', state') -> Some (Let (x, ty, e1', e2), state')
+     | None -> None)
+  
+  (* Regras para Atribuição *)
+  (* Salva valor na memória *)
+  (* Cria novo estado com local de mémoria 'l' atualizado com o valor de v *)
+  | Asg (Loc l, v) when value v ->                                       (* atr1, atribui valor a localização de memória *)
+      let v_val = expr_to_value v in
+      let state' = update l v_val state in
+      Some (Unit, state')
+  | Asg (Loc l, e2) ->                                                   (* atr2, avalia expressão 'e2' *)
+    (match step e2 state with
+     | Some (e2', state') -> Some (Asg (Loc l, e2'), state')
+     | None -> None)
+  | Asg (e1, e2) ->                                                      (* atr, avalia expressão 'e1' *)
+    (match step e1 state with
+     | Some (e1', state') -> Some (Asg (e1', e2), state')
+     | None -> None)
+  
+  (* Regras para New *)
+  (* Aloca nova localização na memória e retorna o ponteiro (Loc l) da localização e o estado atualizado *)
+  | New v when value v ->                                                (* new1 *)
+      let v_val = expr_to_value v in
+      let (l, state') = allocate v_val state in
+      Some (Loc l, state')
+  | New e ->                                                             (* new *)
+    (match step e state with
+     | Some (e', state') -> Some (New e', state')
+     | None -> None)
+
+  (* Regras para Desreferenciamento *)
+  (* *)
+  | Deref (Loc l) ->                                                     (* deref1, lê o valor de 'l' de maneira não destrutiva *)
+    (match lookup l state with
+     | Some v -> Some (value_to_expr v, state)
+     | None -> failwith ("Location not found: " ^ string_of_int l))
+  | Deref e ->                                                           (* deref, avalia expressão *)
+    (match step e state with
+     | Some (e', state') -> Some (Deref e', state')
+     | None -> None)
+
+  (* Regras para Sequência *)
+  (* Executa comandos em sequência *)
+  (* Se 'e1' retornou 'Unit' (Null ou valor qualquer) já terminou, então 'e2' vira 'e1' e continua a execução. *)
+  | Seq (Unit, e2) -> Some (e2, state)                                   (* seq1, prepara para a avaliação da próxima expressão *)
+  | Seq (e1, e2) ->                                                      (* seq, avalia expressão inicial *)
+    (match step e1 state with
+     | Some (e1', state') -> Some (Seq (e1', e2), state')
+     | None -> None)
+
+  (* Regras para Print *)
+  (* Concatena 'n' no final de output *)
+  | Print (Num n) ->                                                     (* print-n, imprime número *)
+      let state' = {state with output = state.output @ [n]} in
+      Some (Unit, state')
+  | Print e ->                                                           (* print, avalia 'e' *)
+    (match step e state with
+     | Some (e', state') -> Some (Print e', state')
+     | None -> None)
+
+  (* Regra para Read *)
+  (* Extrai e retorna primeiro elemento do input (n), atualiza entrada com n removido (input = rest) *)
+  | Read ->                                                              (* read *)
+    (match state.input with
+     | n :: rest -> 
+         let state' = {state with input = rest} in
+         Some (Num n, state')
+     | [] -> failwith "No input available")
+  
+  (* Regras para lista*)
+  (* Cons: constrói lista *)
+  | Cons (v1, v2) when value v1 && value v2 -> None  (* Já é valor *)
+  | Cons (v1, e2) when value v1 -> 
+    (match step e2 state with
+     | Some (e2', state') -> Some (Cons (v1, e2'), state')
      | None -> None)
   | Cons (e1, e2) -> 
-    (match step e1 with
-     | Some e1' -> Some (Cons (e1', e2))
+    (match step e1 state with
+     | Some (e1', state') -> Some (Cons (e1', e2), state')
      | None -> None)
 
-  | Prefix (Num n, Nil) -> Some (Cons (Num n, Nil))
-  | Prefix (Num n, e2) -> 
-    (match step e2 with
-     | Some e2' -> Some (Prefix (Num n, e2'))
+  (* Prefix: adiciona no início (reduz para Cons) *)
+  | Prefix (v1, v2) when value v1 && value v2 -> 
+      Some (Cons (v1, v2), state)
+  | Prefix (v1, e2) when value v1 -> 
+    (match step e2 state with
+     | Some (e2', state') -> Some (Prefix (v1, e2'), state')
      | None -> None)
   | Prefix (e1, e2) -> 
-    (match step e1 with
-     | Some e1' -> Some (Prefix (e1', e2))
+    (match step e1 state with
+     | Some (e1', state') -> Some (Prefix (e1', e2), state')
      | None -> None)
 
-  | Suffix (Nil, Num n) -> Some (Cons (Num n, Nil))
-  | Suffix (Cons (Num h, t), Num n) -> 
-    Some (Cons (Num h, Suffix (t, Num n)))
+  (* Suffix: adiciona no final *)
+  | Suffix (Nil, v) when value v -> Some (Cons (v, Nil), state)
+  | Suffix (Cons (h, t), v) when value h && value t && value v -> 
+      Some (Cons (h, Suffix (t, v)), state)
+  | Suffix (v1, v2) when value v1 && value v2 ->
+      (* Caso geral para valores que não são listas *)
+      None  (* Erro de tipo *)
+  | Suffix (v1, e2) when value v1 -> 
+    (match step e2 state with
+     | Some (e2', state') -> Some (Suffix (v1, e2'), state')
+     | None -> None)
   | Suffix (e1, e2) -> 
-    (match step e1 with
-     | Some e1' -> Some (Suffix (e1', e2))
-     | None -> 
-       (match step e2 with
-        | Some e2' -> Some (Suffix (e1, e2'))
-        | None -> None))
+    (match step e1 state with
+     | Some (e1', state') -> Some (Suffix (e1', e2), state')
+     | None -> None)
 
+  | Loc _ -> None  (* Locations são valores *)
 
+(* ----------------------------------------------- *)
+(* Função auxiliar para executar múltiplos passos *)
+(* ----------------------------------------------- *)
+let rec rec_step (e: expr) (state: state) : expr * state =
+  match step e state with
+  | Some (e', state') -> rec_step e' state'
+  | None -> (e, state)
+
+let eval (e: expr) (state: state) : (expr * state) option =
+  if type_check e then Some (rec_step e state)
+  else None
 
 (* ----------------------------------------------- *)
 (* Programa para calcular fatorial de um número    *)

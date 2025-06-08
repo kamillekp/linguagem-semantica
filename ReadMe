@@ -1,0 +1,13 @@
+# Compilação e Execução
+
+## Compilar e executar todos os testes
+make test
+
+## Teste rápido (limpa, compila e testa)
+make quick-test
+
+## Compilar apenas o interpretador
+make build
+
+## Ver todas as opções disponíveis
+make help
