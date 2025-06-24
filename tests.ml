@@ -221,8 +221,121 @@ let test_cases = [
     expected_output = [];
     expected_input_remaining = [];
   };
-]
+  (* Testes Esperando Some com Comportamento Correto *)
+{
+  name = "Sequência com efeitos colaterais";
+  expr = Seq(Print (Num 1), Binop(Sum, Num 2, Num 3));
+  input = [];
+  expected_result = Some (Num 5);
+  expected_output = [1];
+  expected_input_remaining = [];
+};
 
+{
+  name = "While com condição falsa inicial";
+  expr = Wh(Bool false, Print (Num 1));
+  input = [];
+  expected_result = Some Unit;
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "New seguido de atribuição";
+  expr = Let("r", TyRef TyInt, New (Num 0),
+         Seq(Asg(Id "r", Num 42), Deref(Id "r")));
+  input = [];
+  expected_result = Some (Num 42);
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Read, cálculo e print";
+  expr = Let("x", TyInt, Read,
+         Print(Binop(Mul, Id "x", Num 2)));
+  input = [6];
+  expected_result = Some Unit;
+  expected_output = [12];
+  expected_input_remaining = [];
+};
+(* Testes com listas *)
+{
+  name = "Lista: construção simples";
+  expr = Cons(Num 1, Cons(Num 2, Nil));
+  input = [];
+  expected_result = Some (Cons(Num 1, Cons(Num 2, Nil)));
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Prefix adiciona elemento na lista";
+  expr = Prefix(Num 0, Cons(Num 1, Nil));
+  input = [];
+  expected_result = Some (Cons(Num 0, Cons(Num 1, Nil)));
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Suffix adiciona elemento no final da lista";
+  expr = Suffix(Cons(Num 1, Nil), Num 2);
+  input = [];
+  expected_result = Some (Cons(Num 1, Cons(Num 2, Nil)));
+  expected_output = [];
+  expected_input_remaining = [];
+};
+(* Testes de tipo *)
+{
+  name = "Erro de tipo: soma Num e Bool";
+  expr = Binop(Sum, Num 1, Bool true);
+  input = [];
+  expected_result = None;
+  expected_output = [];
+  expected_input_remaining = [];
+};
+{
+  name = "Erro de tipo: atribuição incorreta";
+  expr = Let("r", TyRef TyInt, New (Num 0), Seq(Asg(Id "r", Bool true), Deref (Id "r")));
+  input = [];
+  expected_result = None;
+  expected_output = [];
+  expected_input_remaining = [];
+};
+(* Teste shadowing de variáveis *)
+{
+  name = "Shadowing de variáveis";
+  expr = Let("x", TyInt, Num 1,
+           Let("x", TyInt, Num 2,
+             Binop(Sum, Id "x", Num 1)));
+  input = [];
+  expected_result = Some (Num 3);  (* Deve usar o "x" mais interno *)
+  expected_output = [];
+  expected_input_remaining = [];
+};
+(* Teste com expressão sequencial e efeitos colaterais *)
+{
+  name = "Sequência com Print e Let";
+  expr = Seq(
+          Print (Num 10),
+          Let("x", TyInt, Num 5, Binop(Sum, Id "x", Num 1))
+        );
+  input = [];
+  expected_result = Some (Num 6);
+  expected_output = [10];
+  expected_input_remaining = [];
+};
+(* Teste para a expressão Unit em sequência *)
+{
+  name = "Sequência com Unit";
+  expr = Seq(Unit, Num 42);
+  input = [];
+  expected_result = Some (Num 42);
+  expected_output = [];
+  expected_input_remaining = [];
+};
+]
 (* ============================================================================ *)
 (* FUNÇÕES DE EXECUÇÃO DOS TESTES *)
 (* ============================================================================ *)
