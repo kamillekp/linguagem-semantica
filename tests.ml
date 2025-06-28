@@ -15,12 +15,16 @@ type test_case = {
 }
 
 (* Função para comparar expressões (simplified) *)
-let expr_equal (e1: expr) (e2: expr) : bool =
+let rec expr_equal (e1: expr) (e2: expr) : bool =
   match (e1, e2) with
   | (Num n1, Num n2) -> n1 = n2
   | (Bool b1, Bool b2) -> b1 = b2
   | (Unit, Unit) -> true
   | (Loc l1, Loc l2) -> l1 = l2
+  | (Nil, Nil) -> true
+  | (Cons (h1, t1), Cons (h2, t2)) -> expr_equal h1 h2 && expr_equal t1 t2
+  | (Prefix (a1, b1), Prefix (a2, b2)) -> expr_equal a1 a2 && expr_equal b1 b2
+  | (Suffix (a1, b1), Suffix (a2, b2)) -> expr_equal a1 a2 && expr_equal b1 b2
   | _ -> false
 
 (* Função para executar um teste e verificar resultado *)
@@ -34,15 +38,20 @@ let run_single_test (test: test_case) : bool =
   
   Printf.printf "Executando: %s... " test.name;
   
-  match eval test.expr test_state with
-  | Some (result, final_state) ->
-    let result_ok = match test.expected_result with
-      | Some expected -> expr_equal result expected
-      | None -> true (* Não verifica resultado específico *)
-    in
+match eval test.expr test_state, test.expected_result with
+| None, None ->  (* Teste esperava falha de tipagem e falhou corretamente *)
+    Printf.printf "✓ PASSOU\n";
+    true
+| None, Some _ ->
+    Printf.printf "✗ ERRO DE EXECUÇÃO (esperava resultado válido)\n";
+    false
+| Some _, None ->
+    Printf.printf "✗ ESPERAVA FALHA DE TIPO, MAS EXECUTOU\n";
+    false
+| Some (result, final_state), Some expected ->
+    let result_ok = expr_equal result expected in
     let output_ok = final_state.output = test.expected_output in
     let input_ok = final_state.input = test.expected_input_remaining in
-    
     if result_ok && output_ok && input_ok then (
       Printf.printf "✓ PASSOU\n";
       true
@@ -55,9 +64,6 @@ let run_single_test (test: test_case) : bool =
       if not input_ok then Printf.printf "  - Input restante diferente\n";
       false
     )
-  | None ->
-    Printf.printf "✗ ERRO DE EXECUÇÃO\n";
-    false
 
 (* ============================================================================ *)
 (* DEFINIÇÃO DOS CASOS DE TESTE *)
@@ -335,6 +341,90 @@ let test_cases = [
   expected_output = [];
   expected_input_remaining = [];
 };
+(* Testes fatorial *)
+{
+    name = "Fatorial de 0";
+    expr = fat;
+    input = [0];
+    expected_result = Some Unit;
+    expected_output = [1];
+    expected_input_remaining = [];
+  };
+
+  {
+    name = "Fatorial de 1";
+    expr = fat;
+    input = [1];
+    expected_result = Some Unit;
+    expected_output = [1];
+    expected_input_remaining = [];
+  };
+
+  {
+    name = "Fatorial de 3";
+    expr = fat;
+    input = [3];
+    expected_result = Some Unit;
+    expected_output = [6];
+    expected_input_remaining = [];
+  };
+
+  {
+    name = "Fatorial de 5";
+    expr = fat;
+    input = [5];
+    expected_result = Some Unit;
+    expected_output = [120];
+    expected_input_remaining = [];
+  };
+  (* Testes fat com funçoes diferentes *)
+    {
+    name = "Fatorial fixo: 0";
+    expr =
+      Let("y", TyRef TyInt, New (Num 1),
+      Let("z", TyRef TyInt, New (Num 0),
+      Seq(whi, prt)));
+    input = [];
+    expected_result = Some Unit;
+    expected_output = [1];
+    expected_input_remaining = [];
+  };
+
+  {
+    name = "Fatorial fixo: 1";
+    expr =
+      Let("y", TyRef TyInt, New (Num 1),
+      Let("z", TyRef TyInt, New (Num 1),
+      Seq(whi, prt)));
+    input = [];
+    expected_result = Some Unit;
+    expected_output = [1];
+    expected_input_remaining = [];
+  };
+
+  {
+    name = "Fatorial fixo: 3";
+    expr =
+      Let("y", TyRef TyInt, New (Num 1),
+      Let("z", TyRef TyInt, New (Num 3),
+      Seq(whi, prt)));
+    input = [];
+    expected_result = Some Unit;
+    expected_output = [6];
+    expected_input_remaining = [];
+  };
+
+  {
+    name = "Fatorial fixo: 5";
+    expr =
+      Let("y", TyRef TyInt, New (Num 1),
+      Let("z", TyRef TyInt, New (Num 5),
+      Seq(whi, prt)));
+    input = [];
+    expected_result = Some Unit;
+    expected_output = [120];
+    expected_input_remaining = [];
+  };
 ]
 (* ============================================================================ *)
 (* FUNÇÕES DE EXECUÇÃO DOS TESTES *)

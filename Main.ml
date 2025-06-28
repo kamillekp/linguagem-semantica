@@ -484,7 +484,7 @@ let eval (e: expr) (state: state) : (expr * state) option =
 (* Programa para calcular fatorial de um número    *)
 (* ----------------------------------------------- *)
 
-(*
+
 (* !z > 0 *)
 let cndwhi = Binop(Gt, Deref (Id "z"), Num 0)
 
@@ -511,4 +511,5 @@ let fat =
                                                y := !y * !z;
                                                z := !z - 1);
                                              print (!y) *)
-*)
+
+
