@@ -12,6 +12,7 @@ type tipo =
   | TyRef of tipo                      (* referência para algum tipo *)
   | TyUnit                             (* tipo unitário *)
   | TyList of tipo                     (* lista de elementos de algum tipo *)
+  | TyArray of tipo                    (* array de elementos de algum tipo *)
 
 (* expr = expressões da linguagem *)
 type expr = 
@@ -35,6 +36,9 @@ type expr =
   | Cons of expr * expr                 (* n :: l *)
   | Prefix of expr * expr               (* n.l *)
   | Suffix of expr * expr               (* l.n *)
+  
+  | MkArray of expr * expr  			(* MkArray(tamanho, valor_inicial) *)
+  | Get of expr * expr      			(* Get(array, indice) para ler um valor *)
 
 (*------------------------------------------------------------------------------------------------*)
 (* AMBIENTE DE TIPOS - Necessário para Type Inference *)
@@ -99,14 +103,30 @@ let rec typeInfer (env: type_env) (e : expr) : tipo option =
         | _ -> None)
      | _ -> None)
 
-  (* T-atr: Γ ⊢ e₁ : ref T, Γ ⊢ e₂ : T *)
-  | Asg (e1, e2) -> 
-    (match typeInfer env e1 with
-     | Some (TyRef t1) -> 
-       (match typeInfer env e2 with
-        | Some t2 when t1 = t2 -> Some TyUnit
-        | _ -> None)
-     | _ -> None)
+  (* Em Main.ml, na função 'typeInfer', SUBSTITUA o bloco 'Asg' por este: *)
+
+  | Asg (e1, e2) ->
+      (match e1 with
+        (* CASO 1: O lado esquerdo é um acesso de array, ex: arr[i] := ... *)
+        | Get (arr_expr, idx_expr) ->
+            (match (typeInfer env arr_expr, typeInfer env idx_expr) with
+              | (Some (TyRef (TyArray t_arr)), Some TyInt) ->
+                  (match typeInfer env e2 with
+                    | Some t_val when t_arr = t_val -> Some TyUnit
+                    | _ -> None)
+              | _ -> None)
+        
+        (* CASO 2: O lado esquerdo é qualquer outra coisa (esperamos um Id que seja ref) *)
+        | _ ->
+            (match typeInfer env e1 with
+              | Some (TyRef t1) ->
+                  (match typeInfer env e2 with
+                    | Some t2 when t1 = t2 -> Some TyUnit
+                    | _ -> None)
+              | _ -> None)
+      )
+
+  (* ... continue com os outros casos (Nil, Cons, etc) *)
   
   (* T-let: Γ ⊢ e₁ : T, Γ, x ↦ T ⊢ e₂ : T' *)
   (* Adicionamos a variável ao ambiente para verificar tipagem dentro do corpo (escopo da variável) *)
@@ -162,6 +182,21 @@ let rec typeInfer (env: type_env) (e : expr) : tipo option =
     (match (typeInfer env e1, typeInfer env e2) with
      | (Some (TyList t1), Some t2) when t1 = t2 -> Some (TyList t1)
      | _ -> None)
+	 
+  (* T-MkArray: Γ ⊢ e₁ : int, Γ ⊢ e₂ : T  =>  Γ ⊢ MkArray(e₁, e₂) : ref (array T) *)
+  | MkArray (size_expr, init_expr) ->
+    (match typeInfer env size_expr with
+      | Some TyInt -> 
+        (match typeInfer env init_expr with
+          | Some t -> Some (TyRef (TyArray t)) (* Retorna uma referência para o array *)
+          | None -> None)
+      | _ -> None)
+	  
+   (* T-Get: Γ ⊢ e₁ : ref (array T), Γ ⊢ e₂ : int  =>  Γ ⊢ Get(e₁, e₂) : T *)
+  | Get (arr_expr, idx_expr) ->
+    (match (typeInfer env arr_expr, typeInfer env idx_expr) with
+      | (Some (TyRef (TyArray t)), Some TyInt) -> Some t
+      | _ -> None)
 
 (*------------------------------------------------------------------------------------------------*)
 (* Função auxiliar para verificar tipos antes da execução *)
@@ -183,6 +218,7 @@ type value =
   | VUnit
   | VLoc of location
   | VList of value list
+  | VArray of value array
 
 type state = {
   store: (location * value) list;       (* memória: mapeamento localização -> valor *)
@@ -234,6 +270,7 @@ let value_to_expr (v: value) : expr =
   | VUnit -> Unit
   | VLoc l -> Loc l
   | VList _ -> failwith "Cannot convert list value to expression"
+  | VArray _ -> failwith "Cannot convert array value to expression"
 
 (*------------------------------------------------------------------------------------------------*)
 (* Função de Substituição: {v/x}e *)
@@ -289,6 +326,14 @@ let rec substitute (var: string) (replacement: expr) (expr: expr) : expr =
       Suffix (substitute var replacement e1,
               substitute var replacement e2)
 
+  | MkArray (e1, e2) ->
+      MkArray (substitute var replacement e1,
+               substitute var replacement e2)
+  
+  | Get (e1, e2) ->
+      Get (substitute var replacement e1,
+           substitute var replacement e2)
+
 (*------------------------------------------------------------------------------------------------*)
 (* value : expr -> bool *)
 (*------------------------------------------------------------------------------------------------*)
@@ -306,7 +351,8 @@ let rec value (e : expr) : bool =
 let rec step (e : expr) (state : state) : (expr * state) option =  
   match e with 
   (* Valores não podem dar mais passos *)
-  | Num _ | Bool _ | Unit | Id _ -> None
+  (*| Num _ | Bool _ | Unit | Id _ -> None*)
+  | Num _ | Bool _ | Unit | Id _ | Nil | Loc _ -> None
 
   (* Regras para If *)
   | If (Bool true, e2, _) -> Some (e2, state)
@@ -363,18 +409,41 @@ let rec step (e : expr) (state : state) : (expr * state) option =
   (* Regras para Atribuição *)
   (* Salva valor na memória *)
   (* Cria novo estado com local de mémoria 'l' atualizado com o valor de v *)
-  | Asg (Loc l, v) when value v ->                                       (* atr1, atribui valor a localização de memória *)
+  (* AÇÃO 1: Atribuição a um índice de array. Lado esquerdo e direito são valores. *)
+  | Asg (Get (Loc l, Num i), v) when value v ->
+      (match lookup l state with
+        | Some (VArray arr) ->
+            if i < 0 || i >= Array.length arr then failwith "Index out of bounds"
+            else
+              let v_val = expr_to_value v in
+              arr.(i) <- v_val;
+              let new_store = (l, VArray arr) :: (List.remove_assoc l state.store) in
+              Some (Unit, { state with store = new_store })
+        | _ -> failwith "Assignment to a non-array location")
+
+  (* AÇÃO 2: Atribuição a uma referência simples. Lado esquerdo e direito são valores. *)
+  | Asg (Loc l, v) when value v ->
       let v_val = expr_to_value v in
       let state' = update l v_val state in
       Some (Unit, state')
-  | Asg (Loc l, e2) ->                                                   (* atr2, avalia expressão 'e2' *)
-    (match step e2 state with
-     | Some (e2', state') -> Some (Asg (Loc l, e2'), state')
-     | None -> None)
-  | Asg (e1, e2) ->                                                      (* atr, avalia expressão 'e1' *)
-    (match step e1 state with
-     | Some (e1', state') -> Some (Asg (e1', e2), state')
-     | None -> None)
+
+  (* REDUÇÃO 1: Lado esquerdo é um endereço de array, avalia o lado direito. *)
+  | Asg (Get (Loc l, Num i), e2) ->
+      (match step e2 state with
+        | Some (e2', state') -> Some (Asg (Get (Loc l, Num i), e2'), state')
+        | None -> None)
+  
+  (* REDUÇÃO 2: Lado esquerdo é um endereço simples, avalia o lado direito. *)
+  | Asg (Loc l, e2) ->
+      (match step e2 state with
+        | Some (e2', state') -> Some (Asg (Loc l, e2'), state')
+        | None -> None)
+
+  (* REDUÇÃO 3: O lado esquerdo ainda não é um endereço, então o avalia. *)
+  | Asg (e1, e2) ->
+      (match step e1 state with
+        | Some (e1', state') -> Some (Asg (e1', e2), state')
+        | None -> None)
   
   (* Regras para New *)
   (* Aloca nova localização na memória e retorna o ponteiro (Loc l) da localização e o estado atualizado *)
@@ -467,6 +536,45 @@ let rec step (e : expr) (state : state) : (expr * state) option =
      | None -> None)
 
   | Loc _ -> None  (* Locations são valores *)
+  
+  (* Avaliação do MkArray *)
+  | MkArray (Num size, v) when value v -> (* mka-1, argumentos avaliados, pronto para alocar *)
+      if size < 0 then failwith "Array size cannot be negative"
+      else
+        let v_val = expr_to_value v in
+        let ocaml_array = Array.make size v_val in
+        let (l, state') = allocate (VArray ocaml_array) state in
+        Some (Loc l, state')
+
+  | MkArray (Num size, init_expr) -> (* mka-2, avalia a expressão de inicialização *)
+      (match step init_expr state with
+        | Some (init_expr', state') -> Some (MkArray (Num size, init_expr'), state')
+        | None -> None)
+
+  | MkArray (size_expr, init_expr) -> (* mka-3, avalia a expressão de tamanho *)
+      (match step size_expr state with
+        | Some (size_expr', state') -> Some (MkArray (size_expr', init_expr), state')
+        | None -> None)
+
+  (* Avaliação do Get (leitura) *)
+  | Get (Loc l, Num i) -> (* get-1, array e índice prontos, realiza a leitura *)
+      (match lookup l state with
+        | Some (VArray arr) -> 
+            if i >= 0 && i < Array.length arr then
+              Some (value_to_expr arr.(i), state)
+            else
+              failwith ("Index out of bounds: " ^ string_of_int i)
+        | _ -> failwith "Trying to Get from a non-array location")
+  
+  | Get (Loc l, idx_expr) -> (* get-2, avalia a expressão do índice *)
+      (match step idx_expr state with
+        | Some (idx_expr', state') -> Some (Get (Loc l, idx_expr'), state')
+        | None -> None)
+
+  | Get (arr_expr, idx_expr) -> (* get-3, avalia a expressão do array *)
+      (match step arr_expr state with
+        | Some (arr_expr', state') -> Some (Get (arr_expr', idx_expr), state')
+        | None -> None)
 
 (* ----------------------------------------------- *)
 (* Função auxiliar para executar múltiplos passos *)

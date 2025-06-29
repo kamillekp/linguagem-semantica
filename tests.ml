@@ -425,6 +425,160 @@ let test_cases = [
     expected_output = [120];
     expected_input_remaining = [];
   };
+  (* Testes de Sucesso (Happy Path) *)
+{
+  name = "Array: Criação e leitura de valor inicial";
+  expr =
+    Let("arr", TyRef (TyArray TyInt), MkArray (Num 3, Num 0),
+      Get (Id "arr", Num 1));
+  input = [];
+  expected_result = Some (Num 0);
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Array: Atribuição e leitura simples";
+  expr =
+    Let("a", TyRef (TyArray TyInt), MkArray (Num 5, Num 0),
+      Seq(
+        Asg(Get (Id "a", Num 2), Num 42),
+        Get(Id "a", Num 2)
+      ));
+  input = [];
+  expected_result = Some (Num 42);
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Array: Múltiplas atribuições e cálculo";
+  expr =
+    Let("a", TyRef (TyArray TyInt), MkArray (Num 10, Num 0),
+      Seq(
+        Asg(Get (Id "a", Num 0), Num 100),
+        Seq(
+          Asg(Get (Id "a", Num 9), Num 50),
+          Binop(Sub, Get(Id "a", Num 0), Get(Id "a", Num 9))
+        )
+      ));
+  input = [];
+  expected_result = Some (Num 50);
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Array: Usando uma variável como índice";
+  expr =
+    Let("idx", TyInt, Num 3,
+      Let("arr", TyRef (TyArray TyInt), MkArray (Num 5, Num 1),
+        Seq(
+          Asg(Get (Id "arr", Id "idx"), Num 99),
+          Get(Id "arr", Num 3)
+        )
+      )
+    );
+  input = [];
+  expected_result = Some (Num 99);
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Array: Iterar com While para preencher e somar";
+  expr =
+    Let("arr", TyRef (TyArray TyInt), MkArray (Num 5, Num 0),
+      Let("i", TyRef TyInt, New (Num 0),
+        Seq(
+          Wh(Binop(Lt, Deref (Id "i"), Num 5),
+            Seq(
+              Asg(Get (Id "arr", Deref (Id "i")), Binop(Sum, Deref(Id "i"), Num 10)),
+              Asg(Id "i", Binop(Sum, Deref (Id "i"), Num 1))
+            )
+          ),
+          (* O array agora deve ser [10, 11, 12, 13, 14] *)
+          Binop(Sum, Get(Id "arr", Num 1), Get(Id "arr", Num 4)) (* 11 + 14 *)
+        )
+      )
+    );
+  input = [];
+  expected_result = Some (Num 25);
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Array: Criação de array de booleanos";
+  expr =
+    Let("bool_arr", TyRef (TyArray TyBool), MkArray(Num 2, Bool false),
+      Seq(
+        Asg(Get(Id "bool_arr", Num 1), Bool true),
+        Get(Id "bool_arr", Num 1)
+      )
+    );
+  input = [];
+  expected_result = Some (Bool true);
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+(* Testes de Falha de Tipo (Sad Path) *)
+{
+  name = "Array Erro Tipo: Tamanho não é inteiro";
+  expr = MkArray (Bool true, Num 0);
+  input = [];
+  expected_result = None;
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Array Erro Tipo: Atribuição de tipo incorreto";
+  expr =
+    Let("a", TyRef (TyArray TyInt), MkArray (Num 5, Num 0),
+      Asg(Get (Id "a", Num 2), Bool false)
+    );
+  input = [];
+  expected_result = None;
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Array Erro Tipo: Índice não é inteiro";
+  expr =
+    Let("a", TyRef (TyArray TyInt), MkArray (Num 5, Num 0),
+      Get(Id "a", Bool true)
+    );
+  input = [];
+  expected_result = None;
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Array Erro Tipo: Get em uma referência não-array";
+  expr =
+    Let("r", TyRef TyInt, New (Num 42),
+      Get(Id "r", Num 0)
+    );
+  input = [];
+  expected_result = None;
+  expected_output = [];
+  expected_input_remaining = [];
+};
+
+{
+  name = "Array Erro Tipo: Let com tipo de array incorreto";
+  expr =
+    Let("arr", TyRef (TyArray TyBool), MkArray (Num 3, Num 0), (* Diz que é array de bool, mas inicializa com int *)
+      Get (Id "arr", Num 1));
+  input = [];
+  expected_result = None; (* A verificação de `Let` deve falhar *)
+  expected_output = [];
+  expected_input_remaining = [];
+};
 ]
 (* ============================================================================ *)
 (* FUNÇÕES DE EXECUÇÃO DOS TESTES *)
